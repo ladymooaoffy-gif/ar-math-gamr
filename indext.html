@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AR Math Expansion Number</title>
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    
+    <!-- Canvas Confetti -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Kanit', sans-serif;
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            touch-action: none; /* Prevent scroll on mobile */
+        }
+
+        /* Video / AR Background */
+        .video-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+
+        #webcam {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            /* Flip video horizontally to act like a mirror */
+            transform: scaleX(-1);
+        }
+
+        /* Canvas Layers */
+        #game-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 10;
+            pointer-events: none; /* Let clicks pass through if needed */
+        }
+
+        /* UI Layer */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 20;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none; /* Base UI layer doesn't block */
+        }
+
+        /* UI Panels */
+        .ui-panel {
+            pointer-events: auto;
+            background: rgba(255, 255, 255, 0.25);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 24px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        /* 3D Text */
+        .text-3d {
+            color: #fff;
+            text-shadow: 
+                0 1px 0 #ccc,
+                0 2px 0 #c9c9c9,
+                0 3px 0 #bbb,
+                0 4px 0 #b9b9b9,
+                0 5px 0 #aaa,
+                0 6px 1px rgba(0,0,0,.1),
+                0 0 5px rgba(0,0,0,.1),
+                0 1px 3px rgba(0,0,0,.3),
+                0 3px 5px rgba(0,0,0,.2),
+                0 5px 10px rgba(0,0,0,.25),
+                0 10px 10px rgba(0,0,0,.2),
+                0 20px 20px rgba(0,0,0,.15);
+        }
+
+        /* Animations */
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
+        }
+        .animate-float {
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }
+            50% { box-shadow: 0 0 25px rgba(59, 130, 246, 0.8); }
+            100% { box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }
+        }
+
+        .screen { display: none; width: 100%; height: 100%; }
+        .screen.active { display: flex; flex-direction: column; }
+
+        /* Custom Scrollbar for Leaderboard */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.5); border-radius: 10px; }
+
+        /* Camera Loading Overlay */
+        #camera-loading {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; z-index: 100;
+            display: flex; justify-content: center; align-items: center;
+            color: white; flex-direction: column;
+            transition: opacity 0.5s;
+        }
+        
+        .loader {
+            border: 5px solid #f3f3f3; border-top: 5px solid #3b82f6;
+            border-radius: 50%; width: 50px; height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* HUD overlays */
+        #hud-top-left { position: absolute; top: 20px; left: 20px; pointer-events: none; }
+        #hud-top-right { position: absolute; top: 20px; right: 20px; pointer-events: none; }
+        #hud-center-top { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); pointer-events: none; width: 80%; max-width: 600px; text-align: center;}
+    </style>
+</head>
+<body>
+
+    <!-- Camera Loading Screen -->
+    <div id="camera-loading">
+        <div class="loader mb-4"></div>
+        <h2 class="text-2xl font-bold">กำลังเริ่มต้นระบบ AR และกล้อง...</h2>
+        <p class="text-gray-400 mt-2">โปรดอนุญาตการเข้าถึงกล้องของคุณ</p>
+    </div>
+
+    <!-- AR Background -->
+    <div class="video-container">
+        <video id="webcam" autoplay playsinline></video>
+    </div>
+
+    <!-- Game Rendering Canvas -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- UI Overlay -->
+    <div id="ui-layer">
+
+        <!-- 1. MAIN MENU SCREEN -->
+        <div id="screen-menu" class="screen active justify-center items-center">
+            <div class="ui-panel p-8 text-center max-w-lg w-[90%] flex flex-col items-center">
+                <!-- Placeholder Logo -->
+                <div class="w-24 h-24 bg-white/50 rounded-full flex items-center justify-center mb-4 border-4 border-white shadow-lg animate-float">
+                    <span class="text-4xl">🏫</span>
+                </div>
+                
+                <h1 class="text-4xl md:text-5xl font-extrabold text-3d mb-2">AR Math</h1>
+                <h2 class="text-2xl font-bold text-white mb-6 drop-shadow-md">เกมการเขียนตัวเลขในรูปกระจาย</h2>
+
+                <div class="w-full space-y-4">
+                    <button onclick="startGameSequence()" class="w-full py-4 bg-gradient-to-r from-green-400 to-green-600 hover:from-green-500 hover:to-green-700 text-white font-bold text-2xl rounded-xl shadow-lg transition transform hover:scale-105 active:scale-95 border-2 border-white/50">
+                        ▶ เริ่มเล่นเกม
+                    </button>
+                    <button onclick="showScreen('screen-teacher')" class="w-full py-3 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-bold text-xl rounded-xl shadow-lg transition transform hover:scale-105 active:scale-95 border-2 border-white/50 flex items-center justify-center gap-2">
+                        <span>⚙️</span> Teacher Mode
+                    </button>
+                    <button onclick="showScreen('screen-leaderboard-only')" class="w-full py-3 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white font-bold text-xl rounded-xl shadow-lg transition transform hover:scale-105 active:scale-95 border-2 border-white/50 flex items-center justify-center gap-2">
+                        <span>🏆</span> ตารางคะแนน
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. TEACHER MODE (SETTINGS) -->
+        <div id="screen-teacher" class="screen justify-center items-center">
+            <div class="ui-panel p-6 max-w-md w-[90%] text-white">
+                <div class="flex justify-between items-center mb-6 border-b border-white/20 pb-4">
+                    <h2 class="text-3xl font-bold text-3d">⚙️ ตั้งค่าเกม</h2>
+                    <button onclick="showScreen('screen-menu')" class="text-white hover:text-red-400 text-3xl">&times;</button>
+                </div>
+
+                <div class="space-y-4">
+                    <!-- Time -->
+                    <div>
+                        <label class="block text-lg font-bold mb-2">⏳ เวลาแข่งขัน (วินาที)</label>
+                        <select id="set-time" class="w-full p-3 rounded-lg bg-white/20 border border-white/50 text-white font-bold outline-none focus:bg-white/30">
+                            <option class="text-black" value="60" selected>60 วินาที</option>
+                            <option class="text-black" value="90">90 วินาที</option>
+                            <option class="text-black" value="120">120 วินาที</option>
+                        </select>
+                    </div>
+
+                    <!-- Choices -->
+                    <div>
+                        <label class="block text-lg font-bold mb-2">🎯 จำนวนตัวเลือก</label>
+                        <select id="set-choices" class="w-full p-3 rounded-lg bg-white/20 border border-white/50 text-white font-bold outline-none focus:bg-white/30">
+                            <option class="text-black" value="2">2 ตัวเลือก</option>
+                            <option class="text-black" value="3" selected>3 ตัวเลือก</option>
+                            <option class="text-black" value="4">4 ตัวเลือก</option>
+                            <option class="text-black" value="5">5 ตัวเลือก</option>
+                        </select>
+                    </div>
+
+                    <!-- Ball Color -->
+                    <div>
+                        <label class="block text-lg font-bold mb-2">🎨 สีกรอบลูกบอล</label>
+                        <select id="set-color" class="w-full p-3 rounded-lg bg-white/20 border border-white/50 text-white font-bold outline-none focus:bg-white/30">
+                            <option class="text-black" value="#3b82f6">ฟ้า (Blue)</option>
+                            <option class="text-black" value="#22c55e" selected>เขียว (Green)</option>
+                            <option class="text-black" value="#ef4444">แดง (Red)</option>
+                            <option class="text-black" value="#a855f7">ม่วง (Purple)</option>
+                            <option class="text-black" value="#f97316">ส้ม (Orange)</option>
+                        </select>
+                    </div>
+
+                    <!-- Players -->
+                    <div>
+                        <label class="block text-lg font-bold mb-2">👥 จำนวนผู้เล่น (สลับอัตโนมัติ)</label>
+                        <select id="set-players" class="w-full p-3 rounded-lg bg-white/20 border border-white/50 text-white font-bold outline-none focus:bg-white/30" onchange="updatePlayerInputs()">
+                            <option class="text-black" value="1" selected>เล่นเดี่ยว</option>
+                            <option class="text-black" value="2">2 คน</option>
+                            <option class="text-black" value="3">3 คน</option>
+                            <option class="text-black" value="4">4 คน</option>
+                        </select>
+                    </div>
+
+                    <!-- Player Names (Dynamic) -->
+                    <div id="player-inputs-container" class="space-y-2 mt-2 max-h-32 overflow-y-auto">
+                        <input type="text" id="pname-1" placeholder="ชื่อผู้เล่น 1" class="w-full p-2 rounded-lg bg-white/20 border border-white/50 text-white placeholder-gray-300">
+                    </div>
+                </div>
+
+                <button onclick="saveSettings()" class="mt-6 w-full py-3 bg-green-500 hover:bg-green-600 text-white font-bold rounded-xl shadow-lg transition transform hover:scale-105">
+                    บันทึกการตั้งค่า
+                </button>
+            </div>
+        </div>
+
+        <!-- 3. GAME HUD (Heads Up Display) -->
+        <div id="screen-game" class="screen">
+            <!-- Top Left: Score & Combo -->
+            <div id="hud-top-left" class="ui-panel p-3 px-5 flex flex-col">
+                <div class="text-white font-bold text-2xl flex items-center gap-2 drop-shadow-md">
+                    <span>⭐</span> <span id="hud-score">0</span>
+                </div>
+                <div class="text-yellow-300 font-bold text-lg drop-shadow-md transition-transform" id="hud-combo">
+                    Combo x1
+                </div>
+                <div class="text-sm text-gray-200 mt-1" id="hud-player-name">ผู้เล่น: Player 1</div>
+            </div>
+
+            <!-- Center Top: The Question -->
+            <div id="hud-center-top" class="ui-panel p-4 pb-6 mt-4 border-2 border-yellow-400">
+                <p class="text-white text-lg font-semibold drop-shadow-md mb-1">เขียนในรูปกระจายได้อย่างไร?</p>
+                <h1 id="hud-question" class="text-5xl md:text-6xl font-extrabold text-yellow-300 text-3d tracking-widest">
+                    00,000
+                </h1>
+            </div>
+
+            <!-- Top Right: Timer -->
+            <div id="hud-top-right" class="ui-panel p-3 px-5 flex items-center gap-2 border-2 border-red-400 bg-red-500/20">
+                <span class="text-2xl">⏳</span>
+                <span id="hud-time" class="text-3xl font-extrabold text-white text-3d">60</span>
+            </div>
+        </div>
+
+        <!-- 4. PLAYER SWITCH SCREEN -->
+        <div id="screen-switch" class="screen justify-center items-center">
+            <div class="ui-panel p-10 text-center max-w-lg w-[90%]">
+                <h2 class="text-3xl font-bold text-white mb-2">จบตาของผู้เล่น!</h2>
+                <h1 id="switch-name" class="text-5xl font-extrabold text-yellow-300 text-3d mb-8">Player X</h1>
+                <p class="text-xl text-white mb-6">เตรียมตัวให้พร้อม...</p>
+                <div id="switch-countdown" class="text-6xl font-bold text-white text-3d mb-6">3</div>
+            </div>
+        </div>
+
+        <!-- 5. GAME OVER / LEADERBOARD SCREEN -->
+        <div id="screen-gameover" class="screen justify-center items-center">
+            <div class="ui-panel p-6 md:p-8 max-w-2xl w-[95%] text-white max-h-[90vh] overflow-y-auto">
+                <div class="text-center mb-6">
+                    <h1 class="text-5xl font-extrabold text-red-400 text-3d mb-2">🎉 GAME OVER</h1>
+                    <p class="text-xl">สรุปผลการเล่น</p>
+                </div>
+
+                <!-- Current Game Stats -->
+                <div id="current-stats-container" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                    <!-- Stats will be injected here if played -->
+                </div>
+
+                <hr class="border-white/30 mb-6">
+
+                <!-- Leaderboard -->
+                <div class="text-center mb-4">
+                    <h2 class="text-3xl font-bold text-yellow-300 text-3d">🏆 Top 10 Leaderboard</h2>
+                </div>
+                
+                <div class="bg-black/40 rounded-xl overflow-hidden mb-6">
+                    <table class="w-full text-left">
+                        <thead class="bg-white/10 text-gray-200">
+                            <tr>
+                                <th class="p-3 text-center">อันดับ</th>
+                                <th class="p-3">ชื่อ</th>
+                                <th class="p-3 text-right">คะแนน</th>
+                                <th class="p-3 hidden md:table-cell text-right">ความแม่นยำ</th>
+                                <th class="p-3 hidden md:table-cell text-center">วันที่</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leaderboard-body" class="divide-y divide-white/10">
+                            <!-- Rows injected by JS -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="flex flex-col sm:flex-row gap-4 justify-center">
+                    <button onclick="showScreen('screen-menu')" class="px-8 py-3 bg-gray-500 hover:bg-gray-600 text-white font-bold text-xl rounded-xl shadow-lg transition transform hover:scale-105">
+                        🏠 เมนูหลัก
+                    </button>
+                    <button onclick="startGameSequence()" class="px-8 py-3 bg-green-500 hover:bg-green-600 text-white font-bold text-xl rounded-xl shadow-lg transition transform hover:scale-105">
+                        🔄 เล่นอีกครั้ง
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- MAIN GAME SCRIPT -->
+    <script>
+        // --- Game Settings & State ---
+        const GameSettings = {
+            time: 60,
+            choices: 3,
+            ballColor: '#22c55e',
+            playerCount: 1,
+            playerNames: ['Player 1']
+        };
+
+        const GameState = {
+            isPlaying: false,
+            currentPlayerIndex: 0,
+            playersData: [], // Store stats for current session
+            
+            // Current round stats
+            score: 0,
+            correct: 0,
+            wrong: 0,
+            combo: 0,
+            timeLeft: 0,
+            
+            // Math Data
+            currentQuestion: 0,
+            correctAnswerStr: "",
+            
+            // Physics / Rendering
+            balls: [],
+            particles: [],
+            
+            // Hand tracking
+            fingerPos: { x: -100, y: -100 }, // Smoothed
+            rawFingerPos: { x: -100, y: -100 },
+            trail: []
+        };
+
+        // --- Audio Context & Synth (No external files) ---
+        let audioCtx;
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playSound(type) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+
+            if (type === 'correct') {
+                // Happy chime
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(523.25, now); // C5
+                osc.frequency.setValueAtTime(659.25, now + 0.1); // E5
+                osc.frequency.setValueAtTime(783.99, now + 0.2); // G5
+                gainNode.gain.setValueAtTime(0, now);
+                gainNode.gain.linearRampToValueAtTime(0.3, now + 0.05);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+                osc.start(now);
+                osc.stop(now + 0.4);
+            } else if (type === 'wrong') {
+                // Buzz
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, now);
+                osc.frequency.linearRampToValueAtTime(100, now + 0.3);
+                gainNode.gain.setValueAtTime(0.3, now);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                osc.start(now);
+                osc.stop(now + 0.3);
+            } else if (type === 'tick') {
+                // Clock tick
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(800, now);
+                gainNode.gain.setValueAtTime(0.1, now);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+                osc.start(now);
+                osc.stop(now + 0.05);
+            } else if (type === 'clap') {
+                // Noise buffer for applause
+                const bufferSize = audioCtx.sampleRate * 1.5; // 1.5 seconds
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1; // White noise
+                }
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+                
+                // Filter to make it sound more like clapping/crowd
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'bandpass';
+                filter.frequency.value = 1000;
+                
+                const noiseGain = audioCtx.createGain();
+                noiseGain.gain.setValueAtTime(0, now);
+                noiseGain.gain.linearRampToValueAtTime(0.5, now + 0.1);
+                noiseGain.gain.exponentialRampToValueAtTime(0.01, now + 1.5);
+
+                noise.connect(filter);
+                filter.connect(noiseGain);
+                noiseGain.connect(audioCtx.destination);
+                noise.start(now);
+            }
+        }
+
+        // --- DOM Elements ---
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        const videoElement = document.getElementById('webcam');
+        const loadingScreen = document.getElementById('camera-loading');
+
+        // Resize Canvas to fill screen
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // --- UI Navigation ---
+        function showScreen(screenId) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById(screenId).classList.add('active');
+            
+            if (screenId === 'screen-leaderboard-only') {
+                document.getElementById('screen-gameover').classList.add('active');
+                document.getElementById('current-stats-container').innerHTML = ''; // Hide current stats
+                renderLeaderboard();
+            }
+        }
+
+        // --- Teacher Settings Logic ---
+        function updatePlayerInputs() {
+            const count = parseInt(document.getElementById('set-players').value);
+            const container = document.getElementById('player-inputs-container');
+            container.innerHTML = '';
+            for(let i=1; i<=count; i++) {
+                container.innerHTML += `<input type="text" id="pname-${i}" placeholder="ชื่อผู้เล่น ${i}" value="Player ${i}" class="w-full p-2 mt-2 rounded-lg bg-white/20 border border-white/50 text-white placeholder-gray-300">`;
+            }
+        }
+        updatePlayerInputs(); // Init
+
+        function saveSettings() {
+            GameSettings.time = parseInt(document.getElementById('set-time').value);
+            GameSettings.choices = parseInt(document.getElementById('set-choices').value);
+            GameSettings.ballColor = document.getElementById('set-color').value;
+            GameSettings.playerCount = parseInt(document.getElementById('set-players').value);
+            
+            GameSettings.playerNames = [];
+            for(let i=1; i<=GameSettings.playerCount; i++) {
+                let name = document.getElementById(`pname-${i}`).value.trim();
+                if(!name) name = `Player ${i}`;
+                GameSettings.playerNames.push(name);
+            }
+            showScreen('screen-menu');
+        }
+
+        // --- Math Logic ---
+        function formatNumber(num) {
+            return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        }
+
+        function getExpandedForm(num) {
+            const numStr = num.toString();
+            let parts = [];
+            for (let i = 0; i < numStr.length; i++) {
+                const digit = parseInt(numStr[i]);
+                if (digit !== 0) {
+                    const placeValue = digit * Math.pow(10, numStr.length - 1 - i);
+                    parts.push(placeValue);
+                }
+            }
+            return parts.join(' + ');
+        }
+
+        function generateWrongExpanded(num) {
+            // Create a plausible wrong answer by messing with zeroes or digits
+            let numStr = num.toString();
+            let modType = Math.floor(Math.random() * 3);
+            let wrongStr = "";
+            
+            if (modType === 0) {
+                // Skip a zero where there shouldn't be or add one
+                wrongStr = getExpandedForm(num).replace(' + ', ' + 0 + ');
+                if(wrongStr === getExpandedForm(num)) wrongStr = getExpandedForm(num) + ' + 0';
+            } else if (modType === 1) {
+                // Change a digit
+                let index = Math.floor(Math.random() * numStr.length);
+                let newDigit = (parseInt(numStr[index]) + 1) % 10;
+                if(newDigit === 0) newDigit = 1;
+                let arr = numStr.split('');
+                arr[index] = newDigit.toString();
+                wrongStr = getExpandedForm(parseInt(arr.join('')));
+            } else {
+                // Missing a place value
+                let parts = getExpandedForm(num).split(' + ');
+                if(parts.length > 1) {
+                    parts.splice(Math.floor(Math.random() * parts.length), 1);
+                    wrongStr = parts.join(' + ');
+                } else {
+                    wrongStr = getExpandedForm(num * 10);
+                }
+            }
+            
+            // Failsafe if it accidentally generated correct answer
+            if (wrongStr === getExpandedForm(num) || wrongStr === "") {
+                wrongStr = getExpandedForm(num + (Math.floor(Math.random()*9+1) * 100));
+            }
+            return wrongStr;
+        }
+
+        function nextQuestion() {
+            // Generate number between 10,000 and 99,999
+            GameState.currentQuestion = Math.floor(Math.random() * 90000) + 10000;
+            GameState.correctAnswerStr = getExpandedForm(GameState.currentQuestion);
+            
+            document.getElementById('hud-question').innerText = formatNumber(GameState.currentQuestion);
+
+            // Generate Balls
+            GameState.balls = [];
+            let answers = [GameState.correctAnswerStr];
+            
+            // Add wrong answers based on settings
+            while(answers.length < GameSettings.choices) {
+                let wrong = generateWrongExpanded(GameState.currentQuestion);
+                if(!answers.includes(wrong)) {
+                    answers.push(wrong);
+                }
+            }
+
+            // Shuffle
+            answers.sort(() => Math.random() - 0.5);
+
+            // Create Ball Objects
+            const baseRadius = window.innerWidth < 768 ? 60 : 90;
+            answers.forEach(ans => {
+                GameState.balls.push(new Ball(ans, ans === GameState.correctAnswerStr, baseRadius));
+            });
+        }
+
+        // --- Physics & Entities ---
+        class Ball {
+            constructor(text, isCorrect, radius) {
+                this.text = text;
+                this.isCorrect = isCorrect;
+                this.r = radius;
+                // Spawn randomly within canvas, padded by radius
+                this.x = Math.random() * (canvas.width - this.r * 2) + this.r;
+                this.y = Math.random() * (canvas.height - this.r * 2) + this.r;
+                
+                // Random velocity
+                const speed = window.innerWidth < 768 ? 2 : 4;
+                this.vx = (Math.random() - 0.5) * speed * 2;
+                this.vy = (Math.random() - 0.5) * speed * 2;
+                
+                this.shakeTime = 0;
+            }
+
+            update() {
+                // Shake effect for wrong answer
+                if (this.shakeTime > 0) {
+                    this.shakeTime--;
+                    this.x += (Math.random() - 0.5) * 10;
+                    this.y += (Math.random() - 0.5) * 10;
+                }
+
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // Bounce off walls
+                if (this.x - this.r < 0) { this.x = this.r; this.vx *= -1; }
+                if (this.x + this.r > canvas.width) { this.x = canvas.width - this.r; this.vx *= -1; }
+                if (this.y - this.r < 0) { this.y = this.r; this.vy *= -1; }
+                if (this.y + this.r > canvas.height) { this.y = canvas.height - this.r; this.vy *= -1; }
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                // Glow / Shadow
+                ctx.shadowColor = GameSettings.ballColor;
+                ctx.shadowBlur = 20;
+
+                // Ball background
+                ctx.beginPath();
+                ctx.arc(0, 0, this.r, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                ctx.fill();
+                
+                // Ball Border
+                ctx.lineWidth = 5;
+                ctx.strokeStyle = GameSettings.ballColor;
+                ctx.stroke();
+
+                // Text
+                ctx.shadowBlur = 0; // Remove shadow for text
+                ctx.fillStyle = 'white';
+                
+                // Adjust font size based on text length and radius
+                let fontSize = this.r / 3;
+                if(this.text.length > 15) fontSize = this.r / 4;
+                
+                ctx.font = `bold ${fontSize}px Kanit`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // Wrapping text manually for simple cases
+                const maxWidth = this.r * 1.8;
+                if (ctx.measureText(this.text).width > maxWidth) {
+                    let parts = this.text.split('+');
+                    if (parts.length > 2) {
+                        ctx.fillText(parts.slice(0, 2).join(' + ') + ' +', 0, -fontSize/1.5);
+                        ctx.fillText(parts.slice(2).join(' + '), 0, fontSize/1.5);
+                    } else {
+                        ctx.fillText(this.text, 0, 0, maxWidth);
+                    }
+                } else {
+                    ctx.fillText(this.text, 0, 0, maxWidth);
+                }
+
+                ctx.restore();
+            }
+        }
+
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x; this.y = y;
+                this.vx = (Math.random() - 0.5) * 10;
+                this.vy = (Math.random() - 0.5) * 10;
+                this.r = Math.random() * 5 + 2;
+                this.life = 1.0;
+                this.color = color;
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life -= 0.02;
+            }
+            draw(ctx) {
+                ctx.globalAlpha = Math.max(0, this.life);
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        function spawnParticles(x, y, color) {
+            for(let i=0; i<20; i++) {
+                GameState.particles.push(new Particle(x, y, color));
+            }
+        }
+
+        // --- Game Logic ---
+        let gameTimer = null;
+        
+        function startGameSequence() {
+            initAudio(); // Required for browsers
+            GameState.playersData = [];
+            GameState.currentPlayerIndex = 0;
+            startPlayerTurn();
+        }
+
+        function startPlayerTurn() {
+            // Reset Round Stats
+            GameState.score = 0;
+            GameState.correct = 0;
+            GameState.wrong = 0;
+            GameState.combo = 0;
+            GameState.timeLeft = GameSettings.time;
+            GameState.balls = [];
+            GameState.particles = [];
+            GameState.trail = [];
+            
+            const pName = GameSettings.playerNames[GameState.currentPlayerIndex];
+            document.getElementById('hud-player-name').innerText = `ผู้เล่น: ${pName}`;
+            updateHUD();
+
+            showScreen('screen-switch');
+            document.getElementById('switch-name').innerText = pName;
+            
+            let cd = 3;
+            document.getElementById('switch-countdown').innerText = cd;
+            
+            let cdInt = setInterval(() => {
+                cd--;
+                if(cd > 0) {
+                    document.getElementById('switch-countdown').innerText = cd;
+                    playSound('tick');
+                } else {
+                    clearInterval(cdInt);
+                    showScreen('screen-game');
+                    GameState.isPlaying = true;
+                    nextQuestion();
+                    
+                    gameTimer = setInterval(() => {
+                        GameState.timeLeft--;
+                        updateHUD();
+                        if(GameState.timeLeft <= 10 && GameState.timeLeft > 0) playSound('tick');
+                        
+                        if(GameState.timeLeft <= 0) {
+                            endPlayerTurn();
+                        }
+                    }, 1000);
+                }
+            }, 1000);
+        }
+
+        function endPlayerTurn() {
+            clearInterval(gameTimer);
+            GameState.isPlaying = false;
+            
+            // Save data
+            const pName = GameSettings.playerNames[GameState.currentPlayerIndex];
+            const accuracy = GameState.correct + GameState.wrong > 0 ? 
+                Math.round((GameState.correct / (GameState.correct + GameState.wrong)) * 100) : 0;
+                
+            GameState.playersData.push({
+                name: pName,
+                score: GameState.score,
+                correct: GameState.correct,
+                wrong: GameState.wrong,
+                accuracy: accuracy,
+                date: new Date().toLocaleDateString('th-TH'),
+                time: new Date().toLocaleTimeString('th-TH')
+            });
+
+            // Save to LocalStorage Leaderboard
+            saveToLeaderboard(GameState.playersData[GameState.playersData.length - 1]);
+
+            GameState.currentPlayerIndex++;
+            if(GameState.currentPlayerIndex < GameSettings.playerCount) {
+                // Next player
+                startPlayerTurn();
+            } else {
+                // End game
+                showGameOver();
+            }
+        }
+
+        function updateHUD() {
+            document.getElementById('hud-score').innerText = GameState.score;
+            document.getElementById('hud-time').innerText = GameState.timeLeft;
+            
+            const comboEl = document.getElementById('hud-combo');
+            if(GameState.combo > 1) {
+                comboEl.innerText = `Combo x${GameState.combo}`;
+                comboEl.style.transform = 'scale(1.2)';
+                setTimeout(() => comboEl.style.transform = 'scale(1)', 200);
+            } else {
+                comboEl.innerText = '';
+            }
+        }
+
+        function checkHit(x, y) {
+            if(!GameState.isPlaying) return;
+
+            for(let i = GameState.balls.length - 1; i >= 0; i--) {
+                let b = GameState.balls[i];
+                let dist = Math.hypot(x - b.x, y - b.y);
+                
+                if(dist < b.r) {
+                    if(b.isCorrect) {
+                        // Correct
+                        playSound('correct');
+                        GameState.combo++;
+                        GameState.score += 10 * GameState.combo;
+                        GameState.correct++;
+                        
+                        spawnParticles(b.x, b.y, GameSettings.ballColor);
+                        confetti({
+                            particleCount: 50,
+                            spread: 60,
+                            origin: { x: b.x / canvas.width, y: b.y / canvas.height },
+                            colors: ['#22c55e', '#3b82f6', '#facc15']
+                        });
+
+                        updateHUD();
+                        nextQuestion(); // Generate new
+                    } else {
+                        // Wrong
+                        if(b.shakeTime === 0) { // prevent multiple triggers quickly
+                            playSound('wrong');
+                            GameState.combo = 0;
+                            GameState.score = Math.max(0, GameState.score - 5);
+                            GameState.wrong++;
+                            b.shakeTime = 30; // 30 frames of shaking
+                            updateHUD();
+                        }
+                    }
+                    break; // Only hit one ball per check
+                }
+            }
+        }
+
+        // --- Leaderboard System ---
+        function saveToLeaderboard(data) {
+            let lb = JSON.parse(localStorage.getItem('arMathLB')) || [];
+            lb.push(data);
+            lb.sort((a, b) => b.score - a.score); // Sort by score descending
+            lb = lb.slice(0, 10); // Keep top 10
+            localStorage.setItem('arMathLB', JSON.stringify(lb));
+        }
+
+        function renderLeaderboard() {
+            let lb = JSON.parse(localStorage.getItem('arMathLB')) || [];
+            const tbody = document.getElementById('leaderboard-body');
+            tbody.innerHTML = '';
+            
+            lb.forEach((entry, index) => {
+                let medal = index + 1;
+                if(index === 0) medal = '🥇';
+                if(index === 1) medal = '🥈';
+                if(index === 2) medal = '🥉';
+                
+                tbody.innerHTML += `
+                    <tr class="hover:bg-white/5 transition">
+                        <td class="p-3 text-center text-xl font-bold">${medal}</td>
+                        <td class="p-3 font-semibold">${entry.name}</td>
+                        <td class="p-3 text-right text-yellow-300 font-bold">${entry.score}</td>
+                        <td class="p-3 hidden md:table-cell text-right">${entry.accuracy}%</td>
+                        <td class="p-3 hidden md:table-cell text-center text-sm text-gray-300">${entry.date}</td>
+                    </tr>
+                `;
+            });
+            
+            if(lb.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-gray-400">ยังไม่มีข้อมูลการเล่น</td></tr>`;
+            }
+        }
+
+        function showGameOver() {
+            playSound('clap');
+            showScreen('screen-gameover');
+            
+            // Build current stats grid
+            const statsContainer = document.getElementById('current-stats-container');
+            statsContainer.innerHTML = '';
+            
+            GameState.playersData.forEach(p => {
+                statsContainer.innerHTML += `
+                    <div class="bg-white/10 p-4 rounded-xl border border-white/20 text-center">
+                        <h3 class="font-bold text-lg text-yellow-300">${p.name}</h3>
+                        <div class="text-3xl font-extrabold my-2">${p.score} <span class="text-sm font-normal">pts</span></div>
+                        <div class="text-sm text-green-400">ถูก: ${p.correct} | ผิด: ${p.wrong}</div>
+                        <div class="text-sm text-gray-300">แม่นยำ: ${p.accuracy}%</div>
+                    </div>
+                `;
+            });
+
+            renderLeaderboard();
+        }
+
+        // --- MediaPipe Hands Setup ---
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        hands.onResults((results) => {
+            if(loadingScreen.style.display !== 'none') {
+                loadingScreen.style.opacity = '0';
+                setTimeout(() => loadingScreen.style.display = 'none', 500);
+            }
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                // Get Index Finger Tip (Landmark 8)
+                const indexFinger = results.multiHandLandmarks[0][8];
+                
+                // Mirroring correction: because video is flipped via CSS scaleX(-1), 
+                // the visual X is inverted from the raw data X.
+                const rawX = (1.0 - indexFinger.x) * canvas.width;
+                const rawY = indexFinger.y * canvas.height;
+
+                // Smooth Motion using LERP (Linear Interpolation)
+                if(GameState.fingerPos.x === -100) {
+                    GameState.fingerPos.x = rawX;
+                    GameState.fingerPos.y = rawY;
+                } else {
+                    GameState.fingerPos.x += (rawX - GameState.fingerPos.x) * 0.3; // Smoothing factor
+                    GameState.fingerPos.y += (rawY - GameState.fingerPos.y) * 0.3;
+                }
+
+                // Add to trail
+                GameState.trail.push({x: GameState.fingerPos.x, y: GameState.fingerPos.y});
+                if(GameState.trail.length > 15) GameState.trail.shift();
+
+                // Check collision
+                checkHit(GameState.fingerPos.x, GameState.fingerPos.y);
+            } else {
+                // Decay trail if no hand
+                if(GameState.trail.length > 0) GameState.trail.shift();
+            }
+        });
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 1280,
+            height: 720
+        });
+        
+        // Start Camera
+        camera.start().catch(err => {
+            console.error("Camera Error: ", err);
+            loadingScreen.innerHTML = `<h2 class="text-2xl text-red-500 font-bold">ไม่สามารถเข้าถึงกล้องได้</h2><p class="mt-2 text-white">กรุณาอนุญาตให้เบราว์เซอร์ใช้กล้องแล้วรีเฟรชหน้าเว็บ</p>`;
+        });
+
+        // --- Game Render Loop ---
+        function drawLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (GameState.isPlaying) {
+                // Draw Balls
+                GameState.balls.forEach(b => {
+                    b.update();
+                    b.draw(ctx);
+                });
+
+                // Draw Particles
+                for(let i = GameState.particles.length - 1; i >= 0; i--) {
+                    let p = GameState.particles[i];
+                    p.update();
+                    p.draw(ctx);
+                    if(p.life <= 0) GameState.particles.splice(i, 1);
+                }
+
+                // Draw Cursor & Trail
+                if (GameState.trail.length > 0) {
+                    // Trail
+                    ctx.beginPath();
+                    ctx.moveTo(GameState.trail[0].x, GameState.trail[0].y);
+                    for(let i=1; i<GameState.trail.length; i++) {
+                        ctx.lineTo(GameState.trail[i].x, GameState.trail[i].y);
+                    }
+                    ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)'; // Blue tail
+                    ctx.lineWidth = 10;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    ctx.stroke();
+
+                    // Cursor Head (Index Finger)
+                    const head = GameState.trail[GameState.trail.length - 1];
+                    ctx.beginPath();
+                    ctx.arc(head.x, head.y, 15, 0, Math.PI * 2);
+                    ctx.fillStyle = '#3b82f6';
+                    ctx.shadowColor = '#60a5fa';
+                    ctx.shadowBlur = 20;
+                    ctx.fill();
+                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = 'white';
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+                }
+            }
+
+            requestAnimationFrame(drawLoop);
+        }
+
+        // Start Loop
+        drawLoop();
+
+    </script>
+</body>
+</html>
